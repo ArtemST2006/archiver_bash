@@ -2,20 +2,22 @@
 
 
 echo "тест на производителность"
-
+size_f=${1:-100}
 
 add_files () {
 	local dir="test_dir/log"
-	local size_f=1
 
-	while true; do 
-		free=$(df -m "$dir" | awk 'NR==2 {print $4}')
-		if [ "$free" -lt "$size_f" ]; then 
-			break
-		fi
-		filename="$dir/file$(date +%s%N).txt"
-       	        dd if=/dev/zero of="$filename" bs=1M count=$size_f status=none
-	done
+    	read total used available <<< $(df -B 1 "$dir" | awk 'NR==2 {print $2, $3, $4}')
+
+    	target_used=$((total * 90 / 100))
+    	needed_bytes=$((target_used - used))
+    	file_bytes=$((size_f * 1024))
+    	count=$(( (needed_bytes + file_bytes - 1) / file_bytes ))
+   
+    	for ((i=0; i<count; i++)); do
+        	filename="$dir/file$(date +%s%N)$i.txt"
+        	dd if=/dev/zero of="$filename" bs=1024 count=$size_f status=none
+    	done
 }
 
 run_script() {

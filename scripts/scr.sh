@@ -3,6 +3,7 @@
 
 readonly PATH_DIR=$1
 PERCENT=$2
+N=${3:--1}
 
 mkdir -p "$PATH_DIR/log"
 mkdir -p "$PATH_DIR/backup"
@@ -12,7 +13,7 @@ backup_dir="$PATH_DIR/backup"
 
 
 if ! mountpoint -q "$mount_point"; then
-    	echo "Необходимо примонтировать к папке файловую систему"
+    	echo "Необходимо примонтировать раздел к папке"
         if [ -n "$(ls -A "$mount_point" 2>/dev/null)" ]; then
 	        mkdir -p "$PATH_DIR/tmp_dir"
        	        sudo cp -rp "$mount_point"/* "$PATH_DIR/tmp_dir/" 2>/dev/null
@@ -56,10 +57,17 @@ for file_path in "${files[@]}"; do
 
     tar -rf "$name" --warning=no-file-ignored  "$file_path" 2>/dev/null   
     rm "$file_path"
+	
+    N=$((N-1))
+    if [ $N -eq 0 ]; then
+	    echo "Заархивировано $N самый старых фалов"
+	    break
+    fi
+
     size_dir=$(du -sb "$mount_point" | cut -f1)
 done
 
 echo "Архивация выполнена"
-echo "осталось $(ls -1 "$PATH_DIR/log" | wc -l) фалйов после архивации"
+echo "осталось $(ls -1 "$PATH_DIR/log" | wc -l) фалйов после архивации     $((size_dir * 100 / CAPACITY))%"
 gzip "$name"
 
