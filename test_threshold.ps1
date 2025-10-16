@@ -1,103 +1,136 @@
 # Test disk fill threshold conditions
+param(
+    [int]$TestThreshold = 60,
+    [int]$TestKeepFiles = 10
+)
+
 Write-Host "=== TEST 1: Disk Fill Threshold Conditions ===" -ForegroundColor Magenta
+Write-Host "Test Parameters: Threshold=$TestThreshold%, KeepFiles=$TestKeepFiles" -ForegroundColor Yellow
 
 # Import utility module
 . ".\disk_utils.ps1"
 
-# Import main script with functions
-. ".\log_manager.ps1"
+# Import main script but skip the interactive parts
+$mainScriptContent = Get-Content ".\log_manager.ps1" -Raw
 
-# Global variables (should match main script)
-$global:LogDrive = "L:"
-$global:BackupDrive = "B:" 
-$global:KeepLastNFiles = 5
+# Remove the Read-Host lines and replace with our values
+$modifiedScript = $mainScriptContent -replace '\$Threshold\s*=\s*Read-Host\s*"Enter the limit percent"', "`$Threshold = $TestThreshold"
+$modifiedScript = $modifiedScript -replace '\$KeepLastNFiles\s*=\s*Read-Host\s*"How much files to leave"', "`$KeepLastNFiles = $TestKeepFiles"
 
-# Test scenarios
+# Execute the modified script
+$scriptBlock = [scriptblock]::Create($modifiedScript)
+. $scriptBlock
+
+# Now we have the main script functions but with our parameters
+
+# Test scenarios (using the actual parameters from main script)
 $testScenarios = @(
-    @{TargetUsage = 69; ExpectedAction = $false; Description = "Below threshold (69%) - backup should NOT run"}
-    @{TargetUsage = 70; ExpectedAction = $true;  Description = "At threshold (70%) - backup SHOULD run"}
-    @{TargetUsage = 85; ExpectedAction = $true;  Description = "Above threshold (85%) - backup SHOULD run"}
+    @{TargetUsage = ($Threshold - 1); ExpectedAction = $false; Description = "Below threshold ($($Threshold - 1)%) - backup should NOT run"}
+    @{TargetUsage = $Threshold; ExpectedAction = $true;  Description = "At threshold ($Threshold%) - backup SHOULD run"}
+    @{TargetUsage = ($Threshold + 15); ExpectedAction = $true;  Description = "Above threshold ($($Threshold + 15)%) - backup SHOULD run"}
 )
+
+Write-Host "Actual parameters used: Threshold=$Threshold%, KeepFiles=$KeepLastNFiles" -ForegroundColor Cyan
+
+# Counter for test results
+$passedTests = 0
+$failedTests = 0
 
 # Main test loop
 foreach ($test in $testScenarios) {
-    Write-Host "`n" + "="*60 -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host ("="*60) -ForegroundColor Cyan
     Write-Host "SCENARIO: $($test.Description)" -ForegroundColor Cyan
-    Write-Host "="*60 -ForegroundColor Cyan
+    Write-Host ("="*60) -ForegroundColor Cyan
     
     # Step 1: Fill disk to target percentage
-    Write-Host "Step 1: Preparing disk..." -ForegroundColor Yellow
+    Write-Host "STEP 1: Preparing disk..." -ForegroundColor Yellow
     $success = Set-DiskUsage -DriveLetter $LogDrive -TargetPercentage $test.TargetUsage
     if (-not $success) {
-        Write-Host "❌ Failed to prepare disk for test" -ForegroundColor Red
+        Write-Host "FAILED: Failed to prepare disk for test" -ForegroundColor Red
+        $failedTests++
         continue
     }
     
     # Step 2: Record initial state
     $initialFiles = (Get-ChildItem "$LogDrive\" -File).Count
     $initialUsage = Get-DiskUsage -DriveLetter $LogDrive
-    Write-Host "Initial state: $initialFiles files, $initialUsage% usage" -ForegroundColor White
+    Write-Host "INITIAL STATE: $initialFiles files, $initialUsage% usage" -ForegroundColor Gray
     
-    # Step 3: Set threshold and run check
-    Write-Host "Step 2: Setting threshold and checking..." -ForegroundColor Yellow
-    $global:Threshold = 70
-    
-    # Emulate main script logic
-    $usage = Get-DiskUsage -DriveLetter $LogDrive
-    Write-Host "Current usage: $usage%" -ForegroundColor White
+    # Step 3: Run main script logic
+    Write-Host "STEP 2: Running backup check..." -ForegroundColor Yellow
     
     $backupTriggered = $false
+    $usage = Get-DiskUsage -DriveLetter $LogDrive
+    
+    Write-Host "CURRENT USAGE: $usage%" -ForegroundColor White
+    
     if ($usage -ge $Threshold) {
-        Write-Host "Threshold $Threshold% exceeded! Starting backup..." -ForegroundColor Red
+        Write-Host "THRESHOLD EXCEEDED: $Threshold% - Starting backup..." -ForegroundColor Red
+        
+        # Run backup function directly
         Backup-OldFiles
         $backupTriggered = $true
     }
     else {
-        Write-Host "Threshold $Threshold% not exceeded. Backup not required." -ForegroundColor Green
+        Write-Host "THRESHOLD OK: $Threshold% not exceeded" -ForegroundColor Green
         $backupTriggered = $false
     }
     
     # Step 4: Check result
-    Write-Host "Step 3: Checking result..." -ForegroundColor Yellow
+    Write-Host "STEP 3: Checking result..." -ForegroundColor Yellow
     $finalFiles = (Get-ChildItem "$LogDrive\" -File).Count
     $finalUsage = Get-DiskUsage -DriveLetter $LogDrive
     
-    Write-Host "Final state: $finalFiles files, $finalUsage% usage" -ForegroundColor White
+    Write-Host "FINAL STATE: $finalFiles files, $finalUsage% usage" -ForegroundColor Gray
     
     # Determine test success
     $testPassed = $backupTriggered -eq $test.ExpectedAction
     
     if ($testPassed) {
-        Write-Host "✅ TEST PASSED: Expected - $($test.ExpectedAction), Got - $backupTriggered" -ForegroundColor Green
+        Write-Host "RESULT: PASS - Expected: $($test.ExpectedAction), Got: $backupTriggered" -ForegroundColor Green
+        $passedTests++
     } else {
-        Write-Host "❌ TEST FAILED: Expected - $($test.ExpectedAction), Got - $backupTriggered" -ForegroundColor Red
+        Write-Host "RESULT: FAIL - Expected: $($test.ExpectedAction), Got: $backupTriggered" -ForegroundColor Red
+        $failedTests++
     }
     
     # Additional checks
     if ($backupTriggered) {
         $backupExists = (Get-ChildItem "$BackupDrive\*.zip" | Measure-Object).Count -gt 0
         if ($backupExists) {
-            Write-Host "✅ Archive created successfully" -ForegroundColor Green
+            Write-Host "ARCHIVE: Created successfully" -ForegroundColor Green
         } else {
-            Write-Host "❌ Archive not created" -ForegroundColor Red
+            Write-Host "ARCHIVE: Not created" -ForegroundColor Red
         }
         
         if ($finalFiles -le $KeepLastNFiles) {
-            Write-Host "✅ Correct number of files remaining: $finalFiles" -ForegroundColor Green
+            Write-Host "FILES REMAINING: Correct - $finalFiles files" -ForegroundColor Green
         } else {
-            Write-Host "⚠️  More files remaining than expected: $finalFiles (expected <= $KeepLastNFiles)" -ForegroundColor Yellow
+            Write-Host "FILES REMAINING: Too many - $finalFiles files (expected <= $KeepLastNFiles)" -ForegroundColor Yellow
         }
     }
     
     # Short pause between tests
-    Start-Sleep -Seconds 2
+    Start-Sleep -Seconds 1
 }
 
-Write-Host "`n" + "="*60 -ForegroundColor Magenta
+# Final summary
+Write-Host ""
+Write-Host ("="*60) -ForegroundColor Magenta
+Write-Host "TEST SUMMARY" -ForegroundColor Magenta
+Write-Host ("="*60) -ForegroundColor Magenta
+Write-Host "Passed: $passedTests" -ForegroundColor Green
+Write-Host "Failed: $failedTests" -ForegroundColor $(if ($failedTests -eq 0) { "Green" } else { "Red" })
+Write-Host "Total:  $($testScenarios.Count)" -ForegroundColor White
+
+Write-Host ""
+Write-Host ("="*60) -ForegroundColor Magenta
 Write-Host "TESTING COMPLETED" -ForegroundColor Magenta
-Write-Host "="*60 -ForegroundColor Magenta
+Write-Host ("="*60) -ForegroundColor Magenta
 
 # Cleanup test data
-Write-Host "`nCleaning test data..." -ForegroundColor Gray
+Write-Host ""
+Write-Host "Cleaning test data..." -ForegroundColor Gray
 Clear-TestFolder -Path $LogDrive
 Clear-TestFolder -Path $BackupDrive
